@@ -1,0 +1,367 @@
+library(tidyverse)
+library(socialmixr)
+library(readxl)
+#source("codes/0_packages.R")
+
+#df <- read_xlsx("data/病例密接拼接全库-定.xlsx")
+# df <- read_xlsx("data/病例密接拼接全库demo.xlsx")
+#df<-read_excel("E:/0803复旦合作/ZB_result/data.xlsx")
+load("a.RData")
+df1 <- a %>%as.data.frame()%>%mutate(
+  country = "CN",
+  province = "Shanghai",
+  city = "Shanghai",
+  part_date_card = as.Date(part_date_card),
+  part_date_confirm = as.Date(part_date_confirm),
+  part_date_database = as.Date(part_date_database),
+  part_date_report = as.Date(part_date_report),
+  part_date_onset = as.Date(part_date_onset),
+  part_date_sample = as.Date(part_date_sample),
+  cnt_date_start = as.Date(cnt_date_start),
+  cnt_date_end = as.Date(cnt_date_end),
+  cnt_date_database = as.Date(cnt_date_database),
+  cnt_case_date_card = as.Date(cnt_case_date_card),
+  cnt_case_date_confirm = as.Date(cnt_case_date_confirm),
+  cnt_case_date_database = as.Date(cnt_case_date_database),
+  cnt_case_date_report = as.Date(cnt_case_date_report),
+  cnt_case_date_onset = as.Date(cnt_case_date_onset),
+  cnt_case_date_sample = as.Date(cnt_case_date_sample),
+  part_Occupation1=part_occupation1,
+  cnt_Occupation=cnt_occupation
+) %>%
+  select(country, province, city, contains("part"), contains("cnt"))
+
+
+
+###########relative risk from onset to exposure##
+df1=df1%>% mutate(part_occupation=case_when(
+  part_occupation1 %in% c("不详","其他","其它:其他","其它:待定","其它:暂缺","其它:不详","其它:/","其它:1","其它:无")~"Unknown",
+  part_occupation1 %in% c("散居儿童","幼托儿童")~"Preschooler",
+  part_occupation1 %in% "家务及待业"~"Working age not in the labor force",
+  part_occupation1 %in% "离退人员"~"Retired",
+  part_occupation1 %in% "学生"~"Student",
+  T ~ "Employed"),
+  part_clinical_type = factor(part_clinical_type,
+                              levels = c("无症状感染者", "轻型", "普通型", "重型", "危重型"),
+                              labels = c("Asymptomatic", "Mild", "Moderate", "Severe", "Critical")
+  ),
+  part_symp=ifelse(part_symptom2 == "是" | part_symptom_fever == "是" | part_clinical_type %in% c("Mild", "Moderate", "Severe", "Critical"),
+                   "Yes", "No"
+  ),cnt_place = ifelse(is.na(cnt_place), 999, cnt_place))
+df1<-df1 %>% mutate(cnt_place = factor(cnt_place,
+                                       levels = c(5,1:4,6, 999),
+                                       labels = c("Farmers' Market", "Household", "Health care settings", "Workplaces", "Hotels and restaurants", "Other settings", "Unknown")
+),
+cnt_contact_duration = as.numeric(cnt_date_end - cnt_date_start),
+cnt_freq = ifelse(is.na(cnt_freq), 999, cnt_freq),
+cnt_freq = factor(cnt_freq,
+                  levels = c(1:3, 999),
+                  labels = c("Daily", "Several times", "First time", "Unknown")
+),
+cnt_relationship = ifelse(is.na(cnt_relationship), 999, cnt_relationship),
+cnt_relationship = factor(cnt_relationship,
+                          levels = c(1:8, 999),
+                          labels = c("Family members", "Family members", "Relatives", "Friends", "Colleagues", "Doctor-patient relationship", "In same transportation", "Others", "Unknown")
+),
+cnt_case_time_iso2confirm = as.numeric(cnt_case_date_card - cnt_date_database)
+) %>% mutate(Household=case_when(cnt_place=="Unknown"~"Unknown",cnt_place=="Household"~"Yes",T ~ "No"))
+
+
+
+# participant -------------------------------------------------------------
+
+df.participants <- df1 %>%
+  select(country, province, city, contains("part")) %>%
+  distinct() %>%
+  rownames_to_column("part_id") %>%
+  mutate(
+    part_gender = factor(part_gender, levels = c("男", "女"), labels = c("Male", "Female")),
+    part_clinical_type = factor(part_clinical_type,
+                                levels = c("Asymptomatic", "Mild", "Moderate", "Severe", "Critical"),
+                                labels = c("Asymptomatic", "Mild", "Moderate", "Severe", "Critical")
+    ),
+    part_age_group = case_when(
+      is.na(part_age) ~ "Unknown",
+      part_age < 5 ~ "0-4",
+      part_age < 18 ~ "5-17",
+      part_age < 30 ~ "18-29",
+      part_age < 40 ~ "30-39",
+      part_age < 50 ~ "40-49",
+      part_age < 60 ~ "50-59",
+      part_age < 70 ~ "60-69",
+      part_age < 80 ~ "70-79",
+      T ~ "80+"
+    ),
+    part_age_group = factor(part_age_group,
+                            levels = c("0-4", "5-17", "18-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+", "Unknown")
+    ),
+    Period=case_when(
+      part_date_card < as.Date("2022-03-12") ~ "Before closure of Schools",
+      part_date_card < as.Date("2022-03-15") ~ "Schools closure to onset of public tranportation suspension",
+      part_date_card < as.Date("2022-03-28") ~ "Public tranportation suspension to onset of half-city home quarantine",
+      part_date_card < as.Date("2022-04-04") ~"Half-city home quarantine to onset of city-wide home quarantine",
+      part_date_card < as.Date("2022-05-21") ~"City-wide home quarantine to begin of gradual resumption",
+      T ~ "Since gradual resumption"
+    ),
+    part_occupation=case_when(
+      part_occupation1 %in% c("不详","其他","其它:其他","其它:待定","其它:暂缺","其它:不详","其它:/","其它:1","其它:无")~"Unknown",
+      part_occupation1 %in% c("散居儿童","幼托儿童")~"Preschooler",
+      part_occupation1 %in% "家务及待业"~"Working age not in the labor force",
+      part_occupation1 %in% "离退人员"~"Retired",
+      part_occupation1 %in% "学生"~"Student",
+      T ~ "Employed"),
+    part_highrisk_pop=case_when(
+      part_Occupation1 == "Unknown"~"Unknown",
+      part_Occupation1 %in% c("Preschoolers","Students","Volunteers","Building workers","Food market workers","Medical workers","Delivery workers")~"Yes",
+      T ~ "No") 
+  )
+
+df.contacts <- df1 %>%
+  select(part_card_id, contains("cnt")) %>%
+  left_join(df.participants %>% select(part_id, part_card_id), by = "part_card_id") %>%
+  rownames_to_column("cnt_id") %>%
+  select(cnt_id, part_id, everything(), -part_card_id) %>%
+  mutate(
+    cnt_gender = factor(cnt_gender, levels = c("男", "女"), labels = c("Male", "Female")),
+    cnt_case_clinical_type = factor(cnt_case_clinical_type,
+                                    levels = c("无症状感染者", "轻型", "普通型", "重型", "危重型"),
+                                    labels = c("Asymptomatic", "Mild", "Moderate", "Severe", "Critical")
+    ),
+    cnt_age = ifelse(cnt_age > 115, NA, cnt_age),
+    cnt_age_group = case_when(
+      is.na(cnt_age) ~ "Unknown",
+      cnt_age < 5 ~ "0-4",
+      cnt_age < 18 ~ "5-17",
+      cnt_age < 30 ~ "18-29",
+      cnt_age < 40 ~ "30-39",
+      cnt_age < 50 ~ "40-49",
+      cnt_age < 60 ~ "50-59",
+      cnt_age < 70 ~ "60-69",
+      cnt_age < 80 ~ "70-79",
+      T ~ "80+"
+    ),
+    cnt_age_group = factor(cnt_age_group,
+                           levels = c("0-4", "5-17", "18-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+", "Unknown")
+    ),
+    cnt_place = ifelse(is.na(cnt_place), 999, cnt_place),
+    cnt_place = factor(cnt_place,
+                       levels = c(5,1:4,6, 999),
+                       labels = c("Farmers' Market", "Household", "Health care settings", "Workplaces", "Hotels and restaurants", "Other settings", "Unknown")
+    ),
+    cnt_contact_duration = as.numeric(cnt_date_end - cnt_date_start),
+    cnt_freq = ifelse(is.na(cnt_freq), 999, cnt_freq),
+    cnt_freq = factor(cnt_freq,
+                      levels = c(1:3, 999),
+                      labels = c("Daily", "Several times", "First time", "Unknown")
+    ),
+    cnt_relationship = ifelse(is.na(cnt_relationship), 999, cnt_relationship),
+    cnt_relationship = factor(cnt_relationship,
+                              levels = c(1:8, 999),
+                              labels = c("Family members", "Family members", "Relatives", "Friends", "Colleagues", "Doctor-patient relationship", "In same transportation", "Others", "Unknown")
+    ),
+    cnt_case_time_iso2confirm = as.numeric(cnt_case_date_card - cnt_date_database)
+  ) %>% 
+  mutate(
+    cnt_place=ifelse(cnt_relationship=="In same transportation"&cnt_place%in%c("Other settings","Unknown"),
+                     99,cnt_place),
+    cnt_place=factor(cnt_place,levels = c(1:5,99,6:7),
+                     labels=c("Farmers' Market", "Household", "Health care settings", "Workplaces", "Hotels and restaurants", "Transportation", "Other settings", "Unknown"))
+  )
+# suvery -------------------------------------------------------------------------
+
+reference <- list(
+  title = "Case-Contact data of 2022 Omicron epidemic in Shanghai",
+  bibtype = NA,
+  author = NA,
+  doi = NA,
+  note = NA,
+  year = 2022
+)
+
+SH2022CC <- survey(participants = df.participants, contacts = df.contacts, reference = reference)
+# contact -----------------------------------------------------------------
+
+
+cols<-c("#f10000","#150000")
+pal<-colorRampPalette(cols)
+image(x=1:8,y=1,z=as.matrix(1:8),col=pal(8))
+pal(8)
+library(RColorBrewer)
+library(socialmixr)
+library(tableone)
+library(Rmisc)
+library(ggpubr)
+#Overall:case-contact##############
+age.limits <- seq(0,75,5)
+Q_index=Q_index1=NULL
+Fig_contacts <- list()
+Temp=list()
+Temp_ava1=list()
+n <- 1
+#SH2022CC$participants$Period=factor(SH2022CC$participants$Period,levels = c("Before closure of Schools" ,"Schools closure to onset of public tranplantation suspention","Public tranplantation suspention to half-city home quarantine" ,
+"Half-city home quarantine to city-wide home quarantine" ,"Since city-wide home quarantine" ))
+SH2022CC$participants$Period=factor(SH2022CC$participants$Period)
+for (i in c("Overall","Before closure of Schools","Schools closure to onset of public tranportation suspension",
+            "Public tranportation suspension to onset of half-city home quarantine","Half-city home quarantine to onset of city-wide home quarantine",
+            "City-wide home quarantine to begin of gradual resumption","Since gradual resumption")) {
+  if (i=="Overall") {
+    temp1 <- contact_matrix(SH2022CC,age.limits = seq(0,75,5),n=100)
+  } else {
+    temp1 <- contact_matrix(SH2022CC,age.limits = seq(0,75,5),filter = list(Period=i),n=100)
+  }
+  q=c()
+  
+  for (k in 1:100) {
+    q_temp1 <- temp1$matrices[[k]]$matrix
+    # q_temp1[is.na(q_temp1)] <- 0
+    q_temp1 <- q_temp1[complete.cases(q_temp1),complete.cases(q_temp1)]
+    q_temp2 <- sort(eigen(q_temp1)$val,decreasing = T)[2]/sort(eigen(q_temp1)$val,decreasing = T)[1]
+    q <- append(q,q_temp2)
+    Q=q
+  }
+  Q_index1=data.frame(q=Q,group=i)
+  Q_index=rbind(Q_index,Q_index1)
+  q <- as.numeric(Rmisc::CI(q,ci=0.95))
+  temp2 <- Reduce("+", lapply(temp1$matrices, function(x) {x$matrix})) / 100
+  temp3 <- reshape2::melt(temp2,varnames = c("age1", "age2"), value.name = "contacts")
+  Temp_ava1[[n]]=temp2
+  Temp[[n]]=temp3
+  if (i=="Half-city home quarantine to onset of city-wide home quarantine"){
+    Fig_contacts[[n]] <-
+      ggplot(subset(temp3,subset = is.na(contacts)==F),
+             aes(x = age1, y = age2, fill = contacts))+
+      geom_tile(alpha=2)+
+      scale_y_discrete(expand = c(0,0),position = "left")+
+      scale_x_discrete(expand = c(0,0))+
+      labs(x="Age of infector",y="Age of close contacts",fill=NULL,
+           title = paste("Half-city home quarantine to onset of \ncity-wide home quarantine","\nq index=",sprintf("%0.3f",round(q[2],3))," (95%CI: ",sprintf("%0.3f",round(q[3],3)),"-",
+                         sprintf("%0.3f",round(q[1],3)),")",sep = ""))+
+      scale_fill_gradientn(colours = c("white","#f10000","#150000"))+
+      theme(legend.position = "right",
+            legend.text = element_text(face="bold",colour = "black",size = 25),
+            title = element_text(face="bold",colour="black",size = 25),
+            axis.text = element_text(face="bold",size = 25,colour = "black"),
+            axis.text.x = element_text(angle = 45,hjust = 1),
+            # axis.text.y = element_text(angle = 30,hjust = 1),
+            axis.title = element_text(face="bold",size=30,color = "black"),
+            axis.line = element_line(colour = "black",size = 1),
+            axis.ticks = element_line(color = "black",size = 1),
+            panel.background = element_blank(),
+            panel.border = element_rect(fill = NA,size = 1),
+            plot.margin = margin(t = 0, r = 50, b = 50, l = 0, unit = "pt")
+            # plot.margin=unit(c(2,2,3,2),'lines')
+      )+guides(fill=guide_colorbar(barwidth=unit(1,"cm"),barheight = unit(8,"cm")))
+  }else if (i=="Public tranportation suspension to onset of half-city home quarantine"){
+    Fig_contacts[[n]] <-
+      ggplot(subset(temp3,subset = is.na(contacts)==F),
+             aes(x = age1, y = age2, fill = contacts))+
+      geom_tile(alpha=2)+
+      scale_y_discrete(expand = c(0,0),position = "left")+
+      scale_x_discrete(expand = c(0,0))+
+      labs(x="Age of infector",y="Age of close contacts",fill=NULL,
+           title = paste("Public tranportation suspension to onset \nof half-city home quarantine","\nq index=",sprintf("%0.3f",round(q[2],3))," (95%CI: ",sprintf("%0.3f",round(q[3],3)),"-",
+                         sprintf("%0.3f",round(q[1],3)),")",sep = ""))+
+      scale_fill_gradientn(colours = c("white","#f10000","#150000"))+
+      theme(legend.position = "right",
+            legend.text = element_text(face="bold",colour = "black",size = 25),
+            title = element_text(face="bold",colour="black",size = 25),
+            axis.text = element_text(face="bold",size = 25,colour = "black"),
+            axis.text.x = element_text(angle = 45,hjust = 1),
+            # axis.text.y = element_text(angle = 30,hjust = 1),
+            axis.title = element_text(face="bold",size=30,color = "black"),
+            axis.line = element_line(colour = "black",size = 1),
+            axis.ticks = element_line(color = "black",size = 1),
+            panel.background = element_blank(),
+            panel.border = element_rect(fill = NA,size = 1),
+            plot.margin = margin(t = 0, r = 50, b = 50, l = 0, unit = "pt")
+            # plot.margin=unit(c(2,2,3,2),'lines')
+      )+guides(fill=guide_colorbar(barwidth=unit(1,"cm"),barheight = unit(8,"cm")))
+  }else{
+    Fig_contacts[[n]] <-
+      ggplot(subset(temp3,subset = is.na(contacts)==F),
+             aes(x = age1, y = age2, fill = contacts))+
+      geom_tile(alpha=2)+
+      scale_y_discrete(expand = c(0,0),position = "left")+
+      scale_x_discrete(expand = c(0,0))+
+      labs(x="Age of infector",y="Age of close contacts",fill=NULL,
+           title = paste(i,"\nq index=",sprintf("%0.3f",round(q[2],3))," (95%CI: ",sprintf("%0.3f",round(q[3],3)),"-",
+                         sprintf("%0.3f",round(q[1],3)),")",sep = ""))+
+      scale_fill_gradientn(colours = c("white","#f10000","#150000"))+
+      theme(legend.position = "right",
+            legend.text = element_text(face="bold",colour = "black",size = 25),
+            title = element_text(face="bold",colour="black",size = 25),
+            axis.text = element_text(face="bold",size = 25,colour = "black"),
+            axis.text.x = element_text(angle = 45,hjust = 1),
+            # axis.text.y = element_text(angle = 30,hjust = 1),
+            axis.title = element_text(face="bold",size=30,color = "black"),
+            axis.line = element_line(colour = "black",size = 1),
+            axis.ticks = element_line(color = "black",size = 1),
+            panel.background = element_blank(),
+            panel.border = element_rect(fill = NA,size = 1),
+            plot.margin = margin(t = 0, r = 50, b = 50, l = 0, unit = "pt")
+            # plot.margin=unit(c(2,2,3,2),'lines')
+      )+guides(fill=guide_colorbar(barwidth=unit(1,"cm"),barheight = unit(8,"cm")))
+  }
+  n <- n+1
+}
+#Overall:case-case##############
+age.limits <- seq(0,75,5)
+Q_index=Q_index1=NULL
+Fig_occupation<- list()
+Temp_ava2=Temp_ava1
+SH2022CC$participants$part_occupation=factor(SH2022CC$participants$part_occupation)
+n <- 1
+for (i in c("Preschooler","Student","Employed","Working age not in the labor force","Retired")) {
+  if (i=="Preschooler") {
+    temp1 <- contact_matrix(SH2022CC,age.limits = seq(0,60,2),filter = list(part_occupation=i),n=100)
+  } else if (i=="Retired") {
+    temp1 <- contact_matrix(SH2022CC,age.limits = seq(0,75,3),filter = list(part_occupation=i),n=100)
+  } else {
+    temp1 <- contact_matrix(SH2022CC,age.limits = seq(0,75,5),filter = list(part_occupation=i),n=100)
+  }
+  
+  q=c()
+  for (k in 1:100) {
+    q_temp1 <- temp1$matrices[[k]]$matrix
+    # q_temp1[is.na(q_temp1)] <- 0
+    q_temp1 <- q_temp1[complete.cases(q_temp1),complete.cases(q_temp1)]
+    q_temp2 <- sort(eigen(q_temp1)$val,decreasing = T)[2]/sort(eigen(q_temp1)$val,decreasing = T)[1]
+    q <- append(q,q_temp2)
+    Q=q
+  }
+  Q_index1=data.frame(q=Q,group=i)
+  Q_index=rbind(Q_index,Q_index1)
+  q <- as.numeric(Rmisc::CI(q,ci=0.95))
+  temp2 <- Reduce("+", lapply(temp1$matrices, function(x) {x$matrix})) / 100
+  Temp_ava2[[n+7]]=temp2
+  temp3 <- reshape2::melt(temp2,varnames = c("age1", "age2"), value.name = "contacts")
+  Fig_occupation[[n]] <-
+    ggplot(subset(temp3,subset = is.na(contacts)==F),
+           aes(x = age1, y = age2, fill = contacts))+
+    geom_tile(alpha=2)+
+    scale_y_discrete(expand = c(0,0),position = "left")+
+    scale_x_discrete(expand = c(0,0))+
+    labs(x="Age of infector",y="Age of infectee",fill=NULL,
+         title = paste(i,"\nq index=",sprintf("%0.3f",round(q[2],3))," (95%CI: ",sprintf("%0.3f",round(q[3],3)),"-",
+                       sprintf("%0.3f",round(q[1],3)),")",sep = ""))+
+    scale_fill_gradientn(colours = c("white","#f10000","#150000"))+
+    theme(legend.position = "right",
+          legend.text = element_text(face="bold",colour = "black",size = 25),
+          title = element_text(face="bold",colour = "black",size = 25),
+          axis.text = element_text(face="bold",size = 25,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          # axis.text.y = element_text(angle = 30,hjust = 1),
+          axis.title = element_text(face="bold",size=30,color = "black"),
+          axis.line = element_line(colour = "black",size = 1),
+          axis.ticks = element_line(color = "black",size = 1),
+          panel.background = element_blank(),
+          panel.border = element_rect(fill = NA,size = 1),
+          plot.margin = margin(t = 0, r = 50, b = 50, l = 0, unit = "pt")
+          # plot.margin=unit(c(2,2,3,2),'lines')
+    )+guides(fill=guide_colorbar(barwidth=unit(1,"cm"),barheight = unit(8,"cm")))
+  n <- n+1
+}
+ggsave(ggarrange(Fig_contacts[[1]],Fig_occupation[[1]],Fig_occupation[[2]],Fig_occupation[[3]],Fig_occupation[[4]],Fig_occupation[[5]],
+                 Fig_contacts[[2]],Fig_contacts[[3]],Fig_contacts[[4]],Fig_contacts[[5]],Fig_contacts[[6]],Fig_contacts[[7]],
+                 nrow = 4,ncol = 3,labels = c("A",paste("B",1:5,sep=""),paste("C",1:6,sep="")),
+                 font.label = list(szie=20,colour="black")),width = 42,height =45,limitsize = FALSE,dpi = 300,filename = "contact matrix overall.png")
